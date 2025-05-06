@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  # Kafka Visualization Tool
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka1:
+        condition: service_healthy # kafka-ui chỉ khởi động khi Kafka broker sẵn sàng
+    environment:
+      KAFKA_CLUSTERS_0_NAME: env-dev
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:9092 # này sẽ kết nối với nhau qua mạng nội bộ chung LAN là kafka1:9092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    networks:
+      - local-network-2025
+
+  # Kafka Cluster
+  kafka1:
+    image: bitnami/kafka:3.5
+    container_name: kafka1
+    ports:
+      - 9192:9092
+      - 9193:9094
+    environment:
+    ### General configurations
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller # Node này vừa là broker vừa là controller
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # Define Kafka server-side socket listening ports
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094 # nắm vững yếu tố, Port dùng riêng cho controller giao tiếp nội bộ
+      # Define security protocols gắn từng "listener" (cổng Kafka) với giao thức bảo mật tương ứng
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT # nắm vững yếu tố này
+      # Set advertised listener
+      - KAFKA_CFG_ADVERTISED_LISTENERS=EXTERNAL://192.168.1.7:9193,PLAINTEXT://kafka1:9092 # các phần liên quan đến port kết nối với bên ngoài hoặc ở trong nội bộ kafka
+      # Interbroker listener name # xác định listener (cổng giao tiếp) nào mà các broker trong cluster dùng để nói chuyện với nhau. là PLAINTEXT://9092
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # Cluster ID for Kafka, must be the same across the cluster. Use a generated UUID
+      - KAFKA_KRAFT_CLUSTER_ID=LelM2dIFQkiUFvXCEcqRWA
+      # Cluster address
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka1:9093 # Xác định các node tham gia bỏ phiếu quản trị cluster
+      # Cho phép Kafka sử dụng giao thức PLAINTEXT để giao tiếp (không mã hóa – không SSL, không SASL)
+      - ALLOW_PLAINTEXT_LISTENER=yes
+       # Bộ nhớ khởi tạo khi Kafka bắt đầu chạy: 256 , Bộ nhớ tối đa Kafka có thể dùng: 512 MB
+      - KAFKA_HEAP_OPTS=-Xmx512M -Xms256M 
+      # Enable auto-creation of topics
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      # Message retention period (in milliseconds), set to 7 days
+      - KAFKA_LOG_RETENTION_MS=604800000 # thời gian Kafka giữ lại message (log) trên topic trước khi xóa đi
+      # Broker ID, must be unique 
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_NODE_ID=1
+    volumes:
+      - ./data/bitnami/kafka1:/bitnami/kafka
+    networks:
+      - local-network-2025
+    healthcheck: # Kiểm tra Kafka đã sẵn sàng bằng cách liệt kê topic nội bộ.
+      test: ["CMD", "kafka-topics.sh", "--list", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+networks:
+  local-network-2025:
+    driver: bridge
+
+
+
+# các câu lệnh liên quan đến kafka
+#  Phân chia phân vùng trong topic của kafka:
+# docker exec -it kafka1 kafka-topics.sh --alter --topic myTopic-002 --bootstrap-server localhost:9092 --partitions 3
+
+
+
+# docker exec -it kafka1 kafka-consumer-groups.sh \
+#   --bootstrap-server localhost:9092 \
+#   --describe \
+#   --group test-group
+
+# Sử dụng câu lệnh trên để biết trong 1 group đang được phân chia sử dụng partition nào. 
+# Chúng ta có thể custom partition assigner ở trong ta có thể chúng ta có thể chia partition custom lại
